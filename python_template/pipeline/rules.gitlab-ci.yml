@@ -1,0 +1,169 @@
+#Rules to be used across the pipeline
+
+####If clause checks to compose rules
+.if-master-branch: &if-master-branch
+    if: '$CI_COMMIT_REF_NAME == "master"'
+
+.if-not-master-branch: &if-not-master-branch
+    if: '$CI_COMMIT_REF_NAME != "master"'
+
+.if-version-tag: &if-version-tag
+    if: '$CI_COMMIT_REF_NAME =~ /^v\d*\.\d*\.\d*$/i'
+
+.if-devint-tag: &if-devint-tag
+    if: '$CI_COMMIT_REF_NAME =~ /^\d*\.\d*\.\d*-DEVINT$/i'
+
+.if-not-devint-tag: &if-not-devint-tag
+    if: '$CI_COMMIT_REF_NAME !~ /^\d*\.\d*\.\d*-DEVINT$/i'   
+
+.if-stage-tag: &if-stage-tag
+    if: '$CI_COMMIT_REF_NAME =~ /^\d*\.\d*\.\d*-STAGE$/i'
+
+.if-not-stage-tag: &if-not-stage-tag
+    if: '$CI_COMMIT_REF_NAME !~ /^\d*\.\d*\.\d*-STAGE$/i'   
+
+.if-prod-tag: &if-prod-tag
+    if: '$CI_COMMIT_REF_NAME =~ /^\d*\.\d*\.\d*-PROD$/i'
+
+.if-not-prod-tag: &if-not-prod-tag
+    if: '$CI_COMMIT_REF_NAME !~ /^\d*\.\d*\.\d*-PROD$/i'
+
+# Detached merge request id created
+.if-merge-request-id: &if-merge-request-id
+    if: $CI_MERGE_REQUEST_ID
+
+###Core pipeline job rules--------v
+.core-onsuccess-rules:
+    rules:
+        - <<: *if-version-tag
+          when: never
+        - <<: *if-devint-tag
+          when: never
+        - <<: *if-stage-tag
+          when: never
+        - <<: *if-prod-tag
+          when: never
+        - <<: *if-merge-request-id
+          when: never
+        - when: on_success
+  
+.core-onsuccess-nonblocking-rules:
+    rules:
+        - <<: *if-version-tag
+          when: never
+        - <<: *if-devint-tag
+          when: never
+        - <<: *if-stage-tag
+          when: never
+        - <<: *if-prod-tag
+          when: never
+        - <<: *if-merge-request-id
+          when: never
+        - when: on_success
+          allow_failure: true
+
+.core-manual-nonblocking-rules:
+    rules:
+        - <<: *if-version-tag
+          when: never
+        - <<: *if-devint-tag
+          when: never
+        - <<: *if-stage-tag
+          when: never
+        - <<: *if-prod-tag
+          when: never
+        - <<: *if-merge-request-id
+          when: never
+        - when: manual
+          allow_failure: true
+###Core pipeline job rules--------^
+
+###Master branch job rules--------v
+.master-onsuccess-rules:
+    rules:
+        - <<: *if-not-master-branch
+          when: never
+        - when: on_success
+###Master branch job rules--------^
+
+###Feature branch job rules--------v
+.feature-manual-nonblocking-rules:
+    rules:
+        - <<: *if-master-branch
+          when: never
+        - <<: *if-version-tag
+          when: never
+        - <<: *if-devint-tag
+          when: never
+        - <<: *if-stage-tag
+          when: never
+        - <<: *if-prod-tag
+          when: never
+        - <<: *if-merge-request-id
+          when: never
+        - when: manual
+          allow_failure: true
+###Feature branch job rules--------^
+
+###DEVINT job rules--------v
+.devint-onsuccess-rules:
+    rules:
+        - <<: *if-devint-tag
+          when: on_success
+        - when: never
+  
+.devint-manual-nonblocking-rules:
+    rules:
+        - <<: *if-devint-tag
+          when: manual
+          allow_failure: true
+        - when: never
+
+.devint-onfailure-rules:
+    rules:
+        - <<: *if-devint-tag
+          when: on_failure
+        - when: never
+###DEVINT job rules--------^
+
+###STAGE job rules--------v
+.stage-onsuccess-rules:
+    rules:
+        - <<: *if-stage-tag
+          when: on_success
+        - when: never
+  
+.stage-manual-nonblocking-rules:
+    rules:
+        - <<: *if-stage-tag
+          when: manual
+          allow_failure: true
+        - when: never
+
+.stage-onfailure-rules:
+    rules:
+        - <<: *if-stage-tag
+          when: on_failure
+        - when: never
+###STAGE job rules--------^
+
+###PROD job rules--------v
+.prod-onsuccess-rules:
+    rules:
+        - <<: *if-prod-tag
+          when: on_success
+        - when: never
+  
+.prod-manual-nonblocking-rules:
+    rules:
+        - <<: *if-prod-tag
+          when: manual
+          allow_failure: true
+        - when: never
+  
+.prod-onfailure-rules:
+    rules:
+        - <<: *if-prod-tag
+          when: on_failure
+        - when: never
+###PROD job rules--------^

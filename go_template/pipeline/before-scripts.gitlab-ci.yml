@@ -1,0 +1,159 @@
+#Global before script functions for global use
+.global-functions: &global-functions |
+
+  #Install a dependency required using the proper linux package manager
+  dependency_install() {
+    # Install app with the correct package manager if not already installed
+    local INSTALL_PACKAGE=$1
+    if [ -n "$(which apt-get)" ] #apt-get package manager
+    then
+      if [ -z $(which $INSTALL_PACKAGE) ] #only install if missing
+      then
+        apt-get update
+        apt-get install $INSTALL_PACKAGE --assume-yes
+      fi
+    elif [ -n "$(which apt)" ] #apt package manager
+    then
+      if [ -z $(which $INSTALL_PACKAGE) ] #only install if missing
+      then
+        apt update
+        apt install $INSTALL_PACKAGE --assume-yes
+      fi
+    elif [ -n "$(which apk)" ] #apk package manager
+    then
+      if [ -z $(which $INSTALL_PACKAGE) ] #only install if missing
+      then
+        apk update
+        apk add --no-cache $INSTALL_PACKAGE
+      fi
+    else #report package manager not known
+      echo "***Couldn't determine the necessary package manager to install script dependencies!***"
+      exit 1
+    fi
+  }
+
+  gitlab_access_setup() {
+    #Setup gitlab.com access from git
+    echo -e "machine gitlab.com\nlogin gitlab-ci-token\npassword ${CI_JOB_TOKEN}" > ~/.netrc
+  }
+
+#global pipeline default before_script
+before_script:
+  - *global-functions
+
+#Shared tagging functions
+.tagging-functions: &tagging-functions |
+  get_v_tag() {
+      TAG=$1
+      V_TAG=$(echo ${TAG} | cut -c 2-)
+      # return value will be empty if no current tag
+      echo "${V_TAG}"
+  }
+
+  #get current tag version if commit tagged
+  get_current_tag_version() {
+      CURRENT_V_TAG=$(git tag -i -l "v*" --sort=-version:refname --points-at HEAD >&1 | head -n1)
+      echo $(get_v_tag $CURRENT_V_TAG)
+  }
+
+  #get latest version tag across all commits
+  get_last_tag() {
+      LATEST_V_TAG=$(git tag -i -l "v*" --sort=-version:refname >&1 | head -n 1)
+      echo $(get_v_tag $LATEST_V_TAG)
+  }
+
+  #calculate the right next version
+  calculate_next_version() {
+      LATEST_VERSION=$(get_last_tag)
+      if [ -z "${LATEST_VERSION}" ]
+      then
+          #This is the first version tag in the repo
+          echo "${APP_VERSION}.1"
+      else 
+          LATEST_MAJOR_VERSION=$(echo ${LATEST_VERSION} | cut -d "." -f 1)
+          LATEST_MINOR_VERSION=$(echo ${LATEST_VERSION} | cut -d "." -f 2)
+          LATEST_DEPLOY_VERSION=$(echo ${LATEST_VERSION} | cut -d "." -f 3)
+          #depends on $APP_VERSION configured in .gitlab-ci.yml
+          # App Version is found in project gitlab-ci.yml
+          APP_MAJOR_VERSION=$(echo ${APP_VERSION} | cut -d "." -f 1)
+          APP_MINOR_VERSION=$(echo ${APP_VERSION} | cut -d "." -f 2)
+          if [[ "${LATEST_MAJOR_VERSION}" -ne "${APP_MAJOR_VERSION}" ]] || [[ "${LATEST_MINOR_VERSION}" -ne "${APP_MINOR_VERSION}" ]]
+          then
+              #last major or minor version numbers don't match, so assume a new progression
+              echo "${APP_VERSION}.1"
+          else
+              echo "${LATEST_MAJOR_VERSION}.${LATEST_MINOR_VERSION}.$((${LATEST_DEPLOY_VERSION} + 1))"
+          fi
+      fi
+  }
+
+  #determine next needed tag version
+  get_next_version() {
+      dependency_install git #need git for version checks
+      #ensure we have all the tags
+      git fetch --tags
+      CURRENT_V_TAG=$(get_current_tag_version)
+      #if we have a current version tag just return it to use
+      if [ -n "${CURRENT_V_TAG}" ]
+      then
+          export TAG_VERSION=${CURRENT_V_TAG}
+      else
+          export TAG_VERSION=$(calculate_next_version)
+      fi
+      echo "get_next_version: Latest TAG_VERSION is: ${TAG_VERSION}"
+  }
+
+  #Configure git and ssh for tagging
+  git_ssh_setup() {
+      git --version
+      eval $(ssh-agent -s)
+      mkdir -p ~/.ssh
+      chmod 700 ~/.ssh
+      ssh-keyscan gitlab.com > ~/.ssh/known_hosts
+      chmod 644 ~/.ssh/known_hosts
+      # Depends on $TAG_KEY private ssh key defined in the project and associated deploy key created in the project.
+      if [ -z $TAG_KEY ]; then
+        echo "****ERROR: TAG_KEY CI/CD environment variable missing; Required for tagging."
+        exit 1
+      fi
+      echo "${TAG_KEY}" > ~/.ssh/tagging # | tr -d '\r' | ssh-add - > /dev/null
+      chmod 400 ~/.ssh/tagging
+      ssh-add ~/.ssh/tagging
+      git status
+      git config user.email "${GITLAB_USER_EMAIL}"
+      git config user.name "${GITLAB_USER_NAME}"
+      git remote add gitlab-ci "ssh://git@gitlab.com/${CI_PROJECT_PATH}.git"
+      git remote -v
+  }
+
+  #Tag current commit
+  tag_commit_with_version() {
+      TAG_ENVIRONMENT=${1^^} #Accept tag environment suffix and make uppercase
+      if [ -z "$TAG_ENVIRONMENT" ]; then
+        echo "***ERROR: No environment tag was provided for tagging"
+        exit 1
+      elif [ "$TAG_ENVIRONMENT" == "DEVINT" ]
+      then
+        get_next_version #Set TAG_VERSION environment variable
+        git_ssh_setup
+        echo "tagging commit as v${TAG_VERSION}"
+        git tag -a "v${TAG_VERSION}" -m "Tag created by Gitlab CI Pipeline"
+        git push gitlab-ci "v${TAG_VERSION}" -o ci.skip #Skip pipeline run
+        TAG_ENV="${TAG_VERSION}-${TAG_ENVIRONMENT}"
+        echo "tagging commit ${TAG_ENV} for deployment"
+        git tag -a "${TAG_ENV}" -m "Tag created by Gitlab CI Pipeline"
+        git push gitlab-ci "${TAG_ENV}"
+      else
+        get_next_version #Set TAG_VERSION environment variable
+        git_ssh_setup
+        TAG_ENV="${TAG_VERSION}-${TAG_ENVIRONMENT}"
+        echo "tagging commit ${TAG_ENV} for deployment"
+        git tag -a "${TAG_ENV}" -m "Tag created by Gitlab CI Pipeline"
+        git push gitlab-ci "${TAG_ENV}"
+      fi
+  }
+
+.tagging-function:
+  before_script:
+    - *global-functions
+    - *tagging-functions
